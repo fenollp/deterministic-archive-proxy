@@ -10,21 +10,16 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"sort"
 	"strings"
 )
-
-// GitHubAuthToken is used to request the GitHub host, if set.
-// It defaults to the value of the environment variable GITHUB_AUTH_TOKEN.
-var GitHubAuthToken = os.Getenv("GITHUB_AUTH_TOKEN")
 
 // NewGitHubHandler creates a new GitHubHandler
 func NewGitHubHandler(opts ...Option) *GitHubHandler {
 	return &GitHubHandler{newOptions(opts...)}
 }
 
-var _ http.Handler = (*GitHubHandler)(nil)
+var _ sendfiler = (*GitHubHandler)(nil)
 
 // GitHubHandler proxies requests for GitHub archives following the pattern
 // https://github.com/<user>/<repo>/archive/<hash>.zip or
@@ -39,6 +34,7 @@ func (ghh *GitHubHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 
 	uri := r.URL.Path[1:]
 	if !githubURL(uri) {
+		log.Printf("unhandled URL %q", uri)
 		http.Error(rw, "400 Bad Request", http.StatusBadRequest)
 		return
 	}
@@ -49,8 +45,8 @@ func (ghh *GitHubHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		http.Error(rw, "400 Bad Request", http.StatusBadRequest)
 		return
 	}
-	if GitHubAuthToken != "" {
-		req.Header.Add(hAuthorization, "token "+GitHubAuthToken)
+	if token := ghh.options.authToken; token != "" {
+		req.Header.Add(hAuthorization, "token "+token)
 	}
 
 	rep, err := ghh.options.client.Do(req)
@@ -70,6 +66,17 @@ func (ghh *GitHubHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if ghh.sendfile == nil {
+		ghh.sendfile = ghh.DefaultSendFile
+	}
+	if err := ghh.sendfile(ctx, uri, rw, rep); err != nil {
+		log.Printf("error handling %q: %v", uri, err)
+	}
+}
+
+// DefaultSendFile copies the response headers (except content-length, etag and authorization),
+// then recomputes the archive so it is deterministic and streams the result.
+func (ghh *GitHubHandler) DefaultSendFile(ctx context.Context, uri string, rw http.ResponseWriter, rep *http.Response) error {
 	if header := rw.Header(); true {
 		for k, vv := range rep.Header {
 			if k == hContentLength || k == hETag || k == hAuthorization {
@@ -83,17 +90,12 @@ func (ghh *GitHubHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case strings.HasSuffix(uri, ".zip"):
-		if err := githubZip(ctx, rw, rep.Body); err != nil {
-			log.Println("error handling zip:", err)
-		}
+		return githubZip(ctx, rw, rep.Body)
 	case strings.HasSuffix(uri, ".tar.gz"):
-		if err := githubTarGz(ctx, rw, rep.Body); err != nil {
-			log.Println("error handling tar.gz:", err)
-		}
+		return githubTarGz(ctx, rw, rep.Body)
 	default:
-		if _, err := io.Copy(rw, rep.Body); err != nil {
-			log.Println("error handling identity:", err)
-		}
+		_, err := io.Copy(rw, rep.Body)
+		return err
 	}
 }
 
