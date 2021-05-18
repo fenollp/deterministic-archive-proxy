@@ -4,6 +4,11 @@ import (
 	"net/http"
 )
 
+var (
+	hContentLength = http.CanonicalHeaderKey("content-length")
+	hETag          = http.CanonicalHeaderKey("etag")
+)
+
 type options struct {
 	client *http.Client
 }
