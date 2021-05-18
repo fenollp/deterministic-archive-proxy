@@ -10,9 +10,14 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 )
+
+// GitHubAuthToken is used to request the GitHub host, if set.
+// It defaults to the value of the environment variable GITHUB_AUTH_TOKEN.
+var GitHubAuthToken = os.Getenv("GITHUB_AUTH_TOKEN")
 
 // NewGitHubHandler creates a new GitHubHandler
 func NewGitHubHandler(opts ...Option) *GitHubHandler {
@@ -44,18 +49,30 @@ func (ghh *GitHubHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		http.Error(rw, "400 Bad Request", http.StatusBadRequest)
 		return
 	}
+	if GitHubAuthToken != "" {
+		req.Header.Add(hAuthorization, "token "+GitHubAuthToken)
+	}
 
 	rep, err := ghh.options.client.Do(req)
 	if err != nil {
-		// http.Error(rw, rep.Status, rep.StatusCode)
+		http.Error(rw, "502 Bad Gateway", http.StatusBadGateway)
 		return
 	}
 	defer rep.Body.Close()
 
-	{
-		header := rw.Header()
+	if rep.StatusCode != http.StatusOK {
+		http.Error(rw, rep.Status, rep.StatusCode)
+		return
+	}
+
+	if err := ctx.Err(); err != nil {
+		log.Println("ctx done:", err)
+		return
+	}
+
+	if header := rw.Header(); true {
 		for k, vv := range rep.Header {
-			if k == hContentLength || k == hETag {
+			if k == hContentLength || k == hETag || k == hAuthorization {
 				continue
 			}
 			for _, v := range vv {
@@ -67,15 +84,15 @@ func (ghh *GitHubHandler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.HasSuffix(uri, ".zip"):
 		if err := githubZip(ctx, rw, rep.Body); err != nil {
-			panic(err)
+			log.Println("error handling zip:", err)
 		}
 	case strings.HasSuffix(uri, ".tar.gz"):
 		if err := githubTarGz(ctx, rw, rep.Body); err != nil {
-			panic(err)
+			log.Println("error handling tar.gz:", err)
 		}
 	default:
 		if _, err := io.Copy(rw, rep.Body); err != nil {
-			panic(err)
+			log.Println("error handling identity:", err)
 		}
 	}
 }
@@ -90,7 +107,6 @@ func githubURL(uri string) bool {
 }
 
 func githubTarGz(ctx context.Context, rw http.ResponseWriter, srcReader io.Reader) error {
-	// TODO: check ctx
 	gzipReader, err := gzip.NewReader(srcReader)
 	if err != nil {
 		return err
@@ -107,6 +123,10 @@ func githubTarGz(ctx context.Context, rw http.ResponseWriter, srcReader io.Reade
 	contents := make(map[string]Contents)
 	var filenames []string
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		header, err := tarReader.Next()
 		if err == io.EOF {
 			break
@@ -146,6 +166,10 @@ func githubTarGz(ctx context.Context, rw http.ResponseWriter, srcReader io.Reade
 	sort.Strings(filenames)
 
 	for _, fname := range filenames {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		log.Println("writing tar.gz", fname)
 		pair := contents[fname]
 		if err := tarWriter.WriteHeader(&pair.Header); err != nil {
@@ -161,9 +185,12 @@ func githubTarGz(ctx context.Context, rw http.ResponseWriter, srcReader io.Reade
 }
 
 func githubZip(ctx context.Context, rw http.ResponseWriter, srcReader io.Reader) error {
-	// TODO: check ctx
+	// Download whole ZIP to memory, as a way to provide a ReaderAt for zip.NewReader
 	whole, err := io.ReadAll(srcReader)
 	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 
@@ -181,6 +208,10 @@ func githubZip(ctx context.Context, rw http.ResponseWriter, srcReader io.Reader)
 	contents := make(map[string]Contents)
 	var filenames []string
 	for _, f := range zipReader.File {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		log.Println("reading zip")
 		filenames = append(filenames, f.Name)
 		fr, err := f.Open()
@@ -203,6 +234,10 @@ func githubZip(ctx context.Context, rw http.ResponseWriter, srcReader io.Reader)
 	sort.Strings(filenames)
 
 	for _, fname := range filenames {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		log.Println("writing zip", fname)
 		pair := contents[fname]
 

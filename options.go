@@ -5,6 +5,7 @@ import (
 )
 
 var (
+	hAuthorization = http.CanonicalHeaderKey("authorization")
 	hContentLength = http.CanonicalHeaderKey("content-length")
 	hETag          = http.CanonicalHeaderKey("etag")
 )

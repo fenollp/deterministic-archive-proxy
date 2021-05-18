@@ -20,5 +20,6 @@ func main() {
 		http.Error(w, "400 Bad Request", http.StatusBadRequest)
 	})
 
+	log.Println("Proxy listening on", iface)
 	log.Fatalln(http.ListenAndServe(iface, mux))
 }
