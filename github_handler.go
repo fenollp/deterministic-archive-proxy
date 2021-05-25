@@ -178,7 +178,7 @@ func githubTarGz(ctx context.Context, rw http.ResponseWriter, srcReader io.Reade
 			return err
 		}
 		buffer := bytes.NewReader(pair.Data)
-		if _, err := io.Copy(tarWriter, buffer); err != nil {
+		if _, err := io.CopyN(tarWriter, buffer, pair.Header.Size); err != nil {
 			return err
 		}
 	}
@@ -249,7 +249,7 @@ func githubZip(ctx context.Context, rw http.ResponseWriter, srcReader io.Reader)
 		}
 
 		buffer := bytes.NewReader(pair.Data)
-		if _, err := io.Copy(fw, buffer); err != nil {
+		if _, err := io.CopyN(fw, buffer, int64(len(pair.Data))); err != nil {
 			return err
 		}
 	}
